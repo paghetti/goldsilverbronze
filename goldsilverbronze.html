@@ -346,13 +346,9 @@ function renderGame(state){
     </div>
     <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">나: ${trayStr(me.tray)} / 상대: ${trayStr(opp.tray)}</div>
     <div class="btn-row" style="margin-top:8px;">
-      ${state.round<10
-        ?(ME.role==='host'
-          ?`<button class="game-btn primary" onclick="nextRound()">다음 라운드 (${state.round+1}/10)</button>`
-          :`<div style="color:var(--muted);font-size:0.8rem;">방장이 다음 라운드를 시작합니다...</div>`)
-        :(ME.role==='host'
-          ?`<button class="game-btn primary" onclick="endGame()">결과 보기</button>`
-          :`<div style="color:var(--muted);font-size:0.8rem;">방장이 결과를 확정합니다...</div>`)}
+      ${ME.role==='host'
+        ?`<button class="game-btn primary" onclick="nextRound()">다음 라운드</button>`
+        :`<div style="color:var(--muted);font-size:0.8rem;">방장이 다음 라운드를 시작합니다...</div>`}
     </div>`;
   } else if(oppFolded){
     actionHTML=`<div class="result-msg win-msg">상대가 폴드. 팟 ${state.lastPot}칩 획득!</div>
@@ -405,7 +401,7 @@ function renderGame(state){
     <div class="phase-bar">
       <div class="phase-left">
         ${phaseBadge}
-        <span class="round-info">라운드 ${state.round}/10 &nbsp;|&nbsp; 팟 <strong style="color:var(--draw)">${state.pot}</strong>칩</span>
+        <span class="round-info">라운드 ${state.round} &nbsp;|&nbsp; 팟 <strong style="color:var(--draw)">${state.pot}</strong>칩</span>
       </div>
       <button class="game-btn sm" onclick="showRule()">룰 보기</button>
     </div>
@@ -626,8 +622,12 @@ window.doCall=async function(){
   let newPot=state.pot;
   if(diff>0){me.chips-=diff;newPot+=diff;}
 
-  // lastBettor===null: 아무도 레이즈 안 함 → 내가 체크 → 상대한테 기회
+  // lastBettor 판단:
+  // null → 아무도 액션 안 함 → 내가 체크 → 상대한테 기회
+  // ME.role → 내가 이미 체크했고 상대도 체크(콜)해서 다시 내 차례 → 승부
+  // oppRole() → 상대가 레이즈했고 내가 콜 → 승부
   if(state.lastBettor===null){
+    // 내가 첫 번째 체크 → 상대한테 기회
     const nextPhase=ME.role==='host'?'bet_guest':'bet_host';
     await set(stateRef(roomCode),{
       ...state,[ME.role]:me,[myBetKey]:oppBet,
@@ -635,7 +635,7 @@ window.doCall=async function(){
     });
     return;
   }
-  // 상대가 레이즈했고 내가 콜 → 승부
+  // 그 외(상대가 레이즈했거나, 내가 체크 후 상대도 체크) → 승부
   const winner=compare(state.host.tray,state.guest.tray);
   const lastPot=newPot;
   const newHost={...state.host};
@@ -663,12 +663,13 @@ window.doFold=async function(){
 window.nextRound=async function(){
   if(!G||!G.state||ME.role!=='host') return;
   const state=G.state;
-  if(state.round>=10){await endGame();return;}
   const prev=state.winner;
   const firstPlayer=prev==='draw'?state.firstPlayer:(prev||'host');
   let pot=prev==='draw'?state.pot:0;
+  // 칩은 현재 상태 그대로 이어감, 트레이만 초기화
   const newHost={...state.host,tray:[],weight:0};
   const newGuest={...state.guest,tray:[],weight:0};
+  // 라운드 시작 비용: 칩 3개씩
   if(newHost.chips>=3&&newGuest.chips>=3){newHost.chips-=3;newGuest.chips-=3;pot+=6;}
   const firstPhase=firstPlayer==='host'?'first_host':'first_guest';
   const newState={
@@ -676,8 +677,11 @@ window.nextRound=async function(){
     winner:null,lastPot:0,hostBet:3,guestBet:3,lastBettor:null,
     host:newHost,guest:newGuest,
   };
-  const hOut=newHost.chips<=0||(newHost.gold+newHost.silver+newHost.bronze===0&&newHost.chips<=3);
-  const gOut=newGuest.chips<=0||(newGuest.gold+newGuest.silver+newGuest.bronze===0&&newGuest.chips<=3);
+  // 종료 조건: 토끼 소진 or 칩 부족 (라운드 제한 없음)
+  const hRabbits=newHost.gold+newHost.silver+newHost.bronze;
+  const gRabbits=newGuest.gold+newGuest.silver+newGuest.bronze;
+  const hOut=newHost.chips<=0||hRabbits===0;
+  const gOut=newGuest.chips<=0||gRabbits===0;
   if(hOut||gOut) newState.gameOver=true;
   await set(stateRef(roomCode),newState);
   localTray=[];localWeight=0;
